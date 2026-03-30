@@ -1,0 +1,19 @@
+name: meeting-scheduler-env
+
+description: >
+  RL environment for scheduling meetings with constraints.
+  Agent assigns meetings to time slots to maximize priority satisfaction
+  and minimize conflicts.
+
+tasks:
+  - easy
+  - medium
+  - hard
+
+observation_space:
+  type: dict
+
+action_space:
+  type: dict
+
+reward_range: [-2, 3]
