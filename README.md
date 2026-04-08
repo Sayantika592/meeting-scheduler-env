@@ -1,3 +1,13 @@
+---
+title: Meeting Scheduler Env
+emoji: 🗓️
+colorFrom: blue
+colorTo: indigo
+sdk: docker
+app_port: 8000
+pinned: false
+---
+
 # Meeting Scheduler RL Environment
 
 An OpenEnv-compliant reinforcement learning environment where AI agents learn to schedule meetings under real-world constraints: participant availability, room capacity, equipment requirements, and time preferences.
