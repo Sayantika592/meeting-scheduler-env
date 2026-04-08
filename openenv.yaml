@@ -1,9 +1,11 @@
 name: meeting-scheduler-env
 
 description: >
-  RL environment for scheduling meetings with constraints.
-  Agent assigns meetings to time slots to maximize priority satisfaction
-  and minimize conflicts.
+  RL environment for scheduling meetings with real-world constraints.
+  Agent assigns meetings to time slots and rooms while respecting
+  participant availability, room capacity, equipment requirements,
+  and time preferences. Features 3 difficulty levels from simple
+  scheduling to over-constrained triage scenarios.
 
 tasks:
   - easy
@@ -12,8 +14,21 @@ tasks:
 
 observation_space:
   type: dict
+  fields:
+    current_meeting: "Meeting object (name, participants, priority, duration, equipment, preferred_time)"
+    available_rooms: "List of rooms with capacity and equipment"
+    calendar_grid: "Dict of timeslot -> room -> meeting_name or null"
+    remaining_count: "Number of meetings left to schedule"
+    scheduled_so_far: "List of successfully scheduled meeting names"
+    text_summary: "Human-readable calendar state for LLM prompt"
+    step_reward: "Reward from last action"
+    message: "Feedback message about last action"
+    done: "Whether episode is complete"
 
 action_space:
   type: dict
+  fields:
+    timeslot: "Time string like '9:00' or 'skip'"
+    room: "Room name like 'Room A' (optional when skipping)"
 
-reward_range: [-2, 3]
+reward_range: [-1.0, 1.7]
