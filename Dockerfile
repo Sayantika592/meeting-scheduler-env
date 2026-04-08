@@ -15,4 +15,4 @@ EXPOSE 8000
 # Start the FastAPI server
 # --host 0.0.0.0 makes it accessible from outside the container
 # --port 8000 matches the EXPOSE above
-CMD ["uvicorn", "server.server:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "server.app:app", "--host", "0.0.0.0", "--port", "8000"]
