@@ -1,144 +1,140 @@
 # Meeting Scheduler RL Environment
 
-An RL environment that simulates real-world meeting scheduling. An AI agent assigns meetings to time slots and rooms while respecting participant availability, room capacity, equipment requirements, and time preferences.
+An OpenEnv-compliant reinforcement learning environment where AI agents learn to schedule meetings under real-world constraints: participant availability, room capacity, equipment requirements, and time preferences.
 
-**Deployed at:** [https://ME22B191-meeting-scheduler-env.hf.space](https://ME22B191-meeting-scheduler-env.hf.space)
+## Motivation
 
-## Why Meeting Scheduling?
+Meeting scheduling is a genuine task people perform daily. It involves constraint satisfaction (no double-bookings), prioritization (important meetings first), and resource allocation (rooms, equipment). This makes it an excellent domain for training and evaluating AI agents — complex enough to challenge frontier models, yet structured enough for deterministic grading.
 
-Meeting scheduling is a task every organization faces daily. It involves constraint satisfaction (no double-booking), prioritization (executive meetings before socials), and resource allocation (projector rooms are scarce). The hard task is intentionally over-constrained — not all meetings can fit — forcing the agent to make priority-based triage decisions. This tests reasoning capabilities that go beyond simple slot-filling.
+## Environment Overview
 
-## API
+The agent receives meetings one at a time and must assign each to a (timeslot, room) pair or skip it. Each decision yields an immediate reward, and a final grader scores the complete episode from 0.0 to 1.0.
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/reset?task=easy` | POST | Start a new episode. Returns first meeting to schedule. |
-| `/step` | POST | Send a scheduling action. Returns observation + reward. |
-| `/state` | GET | Get episode metadata (step count, assignments). |
-| `/health` | GET | Health check. Returns `{"status": "healthy"}`. |
+### Observation Space
 
-## Action Space
-
-To schedule a meeting:
-```json
-{"action": {"timeslot": "10:00", "room": "Room A"}}
-```
-
-To skip a meeting:
-```json
-{"action": {"timeslot": "skip"}}
-```
-
-## Observation Space
-
-Each step returns:
+Each step, the agent observes:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `current_meeting` | Meeting | The meeting to schedule (name, participants, priority, duration, equipment, preferred time) |
-| `available_rooms` | List[Room] | All rooms with capacity and equipment |
-| `calendar_grid` | Dict | Timeslot → Room → meeting name or null |
+| `current_meeting` | MeetingInfo | Name, participants, priority, duration, equipment needs, time preference |
+| `available_rooms` | List[RoomInfo] | Rooms with capacity and equipment |
+| `calendar_grid` | Dict | timeslot → room → booked meeting name or null |
 | `remaining_count` | int | Meetings left to schedule |
 | `scheduled_so_far` | List[str] | Successfully scheduled meeting names |
-| `text_summary` | str | Human-readable calendar for LLM prompts |
-| `step_reward` | float | Reward from the last action |
+| `text_summary` | str | Human-readable calendar for LLM consumption |
 | `message` | str | Feedback about the last action |
-| `done` | bool | Whether all meetings have been processed |
+| `done` | bool | Whether the episode is complete |
+| `reward` | float | Reward from the last action |
 
-## Reward Design
+### Action Space
 
-**Per-step rewards (immediate feedback):**
-
-| Outcome | Reward | Conditions |
-|---------|--------|------------|
-| Valid assignment | +1.0 base | No conflicts, room fits, equipment available |
-| Priority bonus | +0.5 / +0.3 / +0.1 | High / medium / low priority |
-| Preference bonus | +0.2 | Preferred time window respected |
-| Invalid assignment | -1.0 | Conflict, room too small, missing equipment |
-| Lazy skip | -0.3 | Meeting could have been scheduled |
-| Smart skip | 0.0 | Meeting genuinely couldn't fit |
-
-Maximum reward per step: +1.7 (high priority + preference met). Minimum: -1.0 (invalid action).
-
-**End-of-episode grader (0.0 – 1.0):**
-
+```json
+{"timeslot": "10:00", "room": "Room A"}
 ```
-score = 0.30 × completion_rate
-      + 0.35 × priority_weighted_completion
-      + 0.15 × preference_satisfaction
-      + 0.20 × skip_quality
+or to skip:
+```json
+{"timeslot": "skip"}
 ```
+
+### Reward Function
+
+Per-step rewards provide signal throughout the trajectory:
+
+| Action | Reward | Rationale |
+|--------|--------|-----------|
+| Valid assignment | +1.0 base | Successfully scheduled |
+| High priority bonus | +0.5 | Protecting important meetings |
+| Medium priority bonus | +0.3 | Moderate importance |
+| Low priority bonus | +0.1 | Still scheduled |
+| Preferred time met | +0.2 | Respecting soft constraints |
+| Invalid assignment | -1.0 | Conflict, wrong room, etc. |
+| Skip (schedulable) | -0.3 | Lazy skip penalty |
+| Skip (unschedulable) | 0.0 | Correct triage |
 
 ## Tasks
 
 ### Easy (5 meetings, 6 slots, 2 rooms)
-All 30-minute meetings, no equipment requirements, no time preferences. Every meeting can fit — tests basic scheduling competence. A random agent scores ~0.5, a competent agent scores 1.0.
+All 30-min meetings, no equipment or preference constraints, plenty of room-slots. Any reasonable agent can schedule all 5. Tests basic slot assignment.
 
 ### Medium (8 meetings, 6 slots, 3 rooms)
-Introduces 60-minute meetings, equipment requirements (projector, video conferencing), and preferred time windows. Shared participants create conflicts. Alice appears in 4 meetings — she's the scheduling bottleneck. Only Room C has video conferencing. A thoughtful agent can schedule all 8.
+Mixed 30/60-min durations, equipment requirements (projector, video_conferencing, whiteboard), shared participants creating conflicts, and time preferences. Requires careful constraint checking. All 8 are schedulable with optimal play.
 
 ### Hard (15 meetings, 8 slots, 4 rooms)
-**Over-constrained by design.** 15 meetings with mixed durations (30/60/90 min) cannot all fit due to participant overlaps and equipment bottlenecks. The agent must triage: schedule all 5 high-priority meetings, fit medium-priority ones where possible, and skip low-priority meetings when necessary. Expected optimal: 10–12 scheduled, 3–5 skipped. This tests strategic reasoning and priority-based trade-offs.
+Over-constrained: more meetings than can fit due to participant conflicts and equipment bottlenecks. Agent must triage by priority — skip low-priority meetings to protect high-priority ones. Expected optimal: 10-12 scheduled, 3-5 skipped.
 
-## Constraints Enforced
+## Setup and Usage
 
-- **No participant double-booking:** A person cannot be in two meetings at the same time
-- **Room capacity:** Meeting participants must fit within room capacity
-- **Equipment requirements:** Room must have required equipment (projector, video_conferencing, whiteboard)
-- **Multi-slot blocking:** 60-min meetings block 2 consecutive slots, 90-min blocks 3
-- **One meeting per room per slot:** No room overlap
-
-## Setup
-
-### Run Locally
+### Local Development
 
 ```bash
-git clone https://huggingface.co/spaces/ME22B191/meeting-scheduler-env
-cd meeting-scheduler-env
-pip install -r requirements.txt
-uvicorn server.server:app --host 0.0.0.0 --port 8000
-```
+# Install dependencies
+pip install -e .
 
-### Run with Docker
+# Run server
+uvicorn server.app:app --host 0.0.0.0 --port 8000
 
-```bash
-docker build -t meeting-scheduler .
-docker run -p 8000:8000 meeting-scheduler
-```
-
-### Run Inference
-
-```bash
-export API_BASE_URL="https://router.huggingface.co/v1"
-export MODEL_NAME="Qwen/Qwen2.5-72B-Instruct"
-export HF_TOKEN="hf_your_token_here"
+# Run inference
+export HF_TOKEN="hf_..."
 python inference.py
 ```
+
+### Docker
+
+```bash
+docker build -t meeting-scheduler-env .
+docker run -p 8000:8000 meeting-scheduler-env
+```
+
+### OpenEnv Validation
+
+```bash
+pip install openenv-core
+openenv validate .
+openenv validate --url http://localhost:8000
+```
+
+## API Endpoints
+
+All endpoints are auto-generated by OpenEnv's `create_app()`:
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/reset` | POST | Start new episode. Body: `{"task": "easy"}` |
+| `/step` | POST | Execute action. Body: `{"action": {"timeslot": "9:00", "room": "Room A"}}` |
+| `/state` | GET | Episode metadata |
+| `/schema` | GET | Action/observation JSON schemas |
+| `/health` | GET | Health check |
+| `/docs` | GET | Swagger UI |
+| `/ws` | WS | WebSocket for persistent sessions |
 
 ## Project Structure
 
 ```
 meeting-scheduler-env/
-├── env/
-│   ├── models.py          ← Pydantic Action, Observation, State models
-│   ├── environment.py     ← Core scheduling logic (reset, step, state)
-│   ├── tasks.py           ← Easy, medium, hard task definitions
-│   └── graders.py         ← End-of-episode scoring (0.0–1.0)
+├── __init__.py           # Package exports
+├── models.py             # OpenEnv Action/Observation models
+├── client.py             # WebSocket client (EnvClient)
+├── openenv.yaml          # Environment manifest
+├── pyproject.toml        # Package metadata
+├── requirements.txt      # Docker dependencies
+├── Dockerfile            # Container definition
+├── inference.py          # LLM baseline script
+├── env/                  # Core game logic
+│   ├── environment.py    # SchedulerEnvironment(Environment)
+│   ├── tasks.py          # Task definitions (easy/medium/hard)
+│   ├── graders.py        # Episode grader (0.0–1.0)
+│   └── internal_models.py# Meeting, Room, Assignment
 ├── server/
-│   └── server.py          ← FastAPI server with /reset, /step, /state
-├── inference.py           ← LLM agent script (OpenAI client)
-├── openenv.yaml           ← Environment manifest
-├── Dockerfile             ← Container definition
-├── requirements.txt       ← Python dependencies
-└── README.md              ← This file
+│   └── app.py            # create_app() one-liner
+└── outputs/              # Runtime outputs
 ```
 
 ## Baseline Scores
 
-| Task | Score | Total Reward | Steps |
-|------|-------|-------------|-------|
-| Easy | ~1.00 | ~6.7 | 5 |
-| Medium | ~0.75 | ~8.5 | 8 |
-| Hard | ~0.65 | ~12.0 | 15 |
+| Task | Final Score | Total Reward | Steps |
+|------|------------ |-------------|-------|
+| easy | ~0.85 | ~7.0 | 5 |
+| medium | ~0.70 | ~9.0 | 8 |
+| hard | ~0.55 | ~8.0 | 15 |
 
-*Scores measured with Qwen2.5-72B-Instruct. Results vary by model and temperature.*
+Scores produced with Qwen/Qwen2.5-72B-Instruct via Hugging Face Inference API.

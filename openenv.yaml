@@ -21,9 +21,9 @@ observation_space:
     remaining_count: "Number of meetings left to schedule"
     scheduled_so_far: "List of successfully scheduled meeting names"
     text_summary: "Human-readable calendar state for LLM prompt"
-    step_reward: "Reward from last action"
     message: "Feedback message about last action"
     done: "Whether episode is complete"
+    reward: "Reward from last action"
 
 action_space:
   type: dict

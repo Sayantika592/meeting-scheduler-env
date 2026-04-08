@@ -27,10 +27,10 @@ and scores across 4 dimensions:
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from .environment import SchedulerEnv
+    from .environment import SchedulerEnvironment
 
 
-def grade_episode(env: "SchedulerEnv") -> float:
+def grade_episode(env: "SchedulerEnvironment") -> float:
     """
     Grade a completed episode. Returns a float in [0.0, 1.0].
 

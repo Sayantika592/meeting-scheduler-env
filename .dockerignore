@@ -1,0 +1,9 @@
+.git
+.github
+__pycache__/
+*.py[cod]
+*$py.class
+outputs/
+.DS_Store
+Dockerfile
+.dockerignore
