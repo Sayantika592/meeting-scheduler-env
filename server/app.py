@@ -202,3 +202,8 @@ def get_state():
         return {"error": "Environment not initialized. Call POST /reset first."}
 
     return env.state().model_dump()
+
+def main():
+    import uvicorn
+    uvicorn.run("server.app:app", host="0.0.0.0", port=8000)
+
