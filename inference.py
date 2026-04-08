@@ -45,7 +45,7 @@ MODEL_NAME = os.getenv("MODEL_NAME", "Qwen/Qwen2.5-72B-Instruct")
 HF_TOKEN = os.getenv("HF_TOKEN") or os.getenv("API_KEY", "")
 
 # Where the Meeting Scheduler server is running
-ENV_BASE_URL = os.getenv("ENV_BASE_URL", "http://localhost:8000")
+ENV_BASE_URL = os.getenv("ENV_BASE_URL", "http://localhost:8002")
 
 # Tasks to run (all 3 required by competition)
 TASKS = ["easy", "medium", "hard"]
