@@ -2,45 +2,32 @@
 #
 # validate-submission.sh — OpenEnv Submission Validator
 #
-# Checks that your Docker image builds, server starts, all 3 tasks
-# run correctly, openenv.yaml is valid, and (optionally) your HF Space is live.
+# Checks that your HF Space is live, Docker image builds, and openenv validate passes.
 #
 # Prerequisites:
-#   - Docker:  https://docs.docker.com/get-docker/
-#   - curl     (usually pre-installed)
-#   - python3  (for YAML validation)
+#   - Docker:       https://docs.docker.com/get-docker/
+#   - openenv-core: pip install openenv-core
+#   - curl (usually pre-installed)
 #
-# Usage:
-#   chmod +x validate-submission.sh
-#   ./validate-submission.sh [ping_url] [repo_dir]
+# Run:
+#   curl -fsSL https://raw.githubusercontent.com/<owner>/<repo>/main/scripts/validate-submission.sh | bash -s -- <ping_url> [repo_dir]
+#
+#   Or download and run locally:
+#     chmod +x validate-submission.sh
+#     ./validate-submission.sh <ping_url> [repo_dir]
 #
 # Arguments:
-#   ping_url   (optional) Your HuggingFace Space URL (e.g. https://your-space.hf.space)
-#   repo_dir   (optional) Path to your repo (default: current directory)
+#   ping_url   Your HuggingFace Space URL (e.g. https://your-space.hf.space)
+#   repo_dir   Path to your repo (default: current directory)
 #
 # Examples:
-#   ./validate-submission.sh
-#   ./validate-submission.sh https://ME22B191-meeting-scheduler-env.hf.space
-#   ./validate-submission.sh https://ME22B191-meeting-scheduler-env.hf.space ./my-repo
+#   ./validate-submission.sh https://my-team.hf.space
+#   ./validate-submission.sh https://my-team.hf.space ./my-repo
 #
 
 set -uo pipefail
 
-# ---------------------------------------------------------------------------
-# Configuration
-# ---------------------------------------------------------------------------
-
 DOCKER_BUILD_TIMEOUT=600
-DOCKER_IMAGE_NAME="openenv-validate-meeting-scheduler"
-DOCKER_CONTAINER_NAME="openenv-validate-container"
-SERVER_PORT=18742          # Use a high port to avoid conflicts
-SERVER_STARTUP_TIMEOUT=60  # Seconds to wait for the server to start
-EPISODE_STEP_TIMEOUT=10    # Seconds per API call
-
-# ---------------------------------------------------------------------------
-# Colors (only when running interactively)
-# ---------------------------------------------------------------------------
-
 if [ -t 1 ]; then
   RED='\033[0;31m'
   GREEN='\033[0;32m'
@@ -50,15 +37,6 @@ if [ -t 1 ]; then
 else
   RED='' GREEN='' YELLOW='' BOLD='' NC=''
 fi
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-pass()   { echo -e "  ${GREEN}✓ PASS${NC}: $1"; }
-fail()   { echo -e "  ${RED}✗ FAIL${NC}: $1"; FAILURES=$((FAILURES + 1)); }
-warn()   { echo -e "  ${YELLOW}⚠ WARN${NC}: $1"; }
-header() { echo -e "\n${BOLD}[$1]${NC} $2"; }
 
 run_with_timeout() {
   local secs="$1"; shift
@@ -79,321 +57,129 @@ run_with_timeout() {
   fi
 }
 
-cleanup() {
-  echo ""
-  echo "Cleaning up..."
-  docker rm -f "$DOCKER_CONTAINER_NAME" 2>/dev/null || true
+portable_mktemp() {
+  local prefix="${1:-validate}"
+  mktemp "${TMPDIR:-/tmp}/${prefix}-XXXXXX" 2>/dev/null || mktemp
 }
 
+CLEANUP_FILES=()
+cleanup() { rm -f "${CLEANUP_FILES[@]+"${CLEANUP_FILES[@]}"}"; }
 trap cleanup EXIT
-
-# ---------------------------------------------------------------------------
-# Parse arguments
-# ---------------------------------------------------------------------------
 
 PING_URL="${1:-}"
 REPO_DIR="${2:-.}"
 
-if [ ! -d "$REPO_DIR" ]; then
-  echo "Error: '$REPO_DIR' is not a directory."
+if [ -z "$PING_URL" ]; then
+  printf "Usage: %s <ping_url> [repo_dir]\n" "$0"
+  printf "\n"
+  printf "  ping_url   Your HuggingFace Space URL (e.g. https://your-space.hf.space)\n"
+  printf "  repo_dir   Path to your repo (default: current directory)\n"
   exit 1
 fi
 
-# Resolve to absolute path
-REPO_DIR="$(cd "$REPO_DIR" && pwd)"
+if ! REPO_DIR="$(cd "$REPO_DIR" 2>/dev/null && pwd)"; then
+  printf "Error: directory '%s' not found\n" "${2:-.}"
+  exit 1
+fi
+PING_URL="${PING_URL%/}"
+export PING_URL
+PASS=0
 
-FAILURES=0
+log()  { printf "[%s] %b\n" "$(date -u +%H:%M:%S)" "$*"; }
+pass() { log "${GREEN}PASSED${NC} -- $1"; PASS=$((PASS + 1)); }
+fail() { log "${RED}FAILED${NC} -- $1"; }
+hint() { printf "  ${YELLOW}Hint:${NC} %b\n" "$1"; }
+stop_at() {
+  printf "\n"
+  printf "${RED}${BOLD}Validation stopped at %s.${NC} Fix the above before continuing.\n" "$1"
+  exit 1
+}
 
-echo -e "${BOLD}=============================================${NC}"
-echo -e "${BOLD}  OpenEnv Submission Validator${NC}"
-echo -e "${BOLD}  Meeting Scheduler Environment${NC}"
-echo -e "${BOLD}=============================================${NC}"
-echo "  Repo: $REPO_DIR"
-[ -n "$PING_URL" ] && echo "  Space URL: $PING_URL"
-echo ""
+printf "\n"
+printf "${BOLD}========================================${NC}\n"
+printf "${BOLD}  OpenEnv Submission Validator${NC}\n"
+printf "${BOLD}========================================${NC}\n"
+log "Repo:     $REPO_DIR"
+log "Ping URL: $PING_URL"
+printf "\n"
 
-# ===================================================================
-# CHECK 1: Required files exist
-# ===================================================================
-header "1/7" "Required files"
+log "${BOLD}Step 1/3: Pinging HF Space${NC} ($PING_URL/reset) ..."
 
-# openenv.yaml
-if [ -f "$REPO_DIR/openenv.yaml" ]; then
-  pass "openenv.yaml exists"
+CURL_OUTPUT=$(portable_mktemp "validate-curl")
+CLEANUP_FILES+=("$CURL_OUTPUT")
+HTTP_CODE=$(curl -s -o "$CURL_OUTPUT" -w "%{http_code}" -X POST \
+  -H "Content-Type: application/json" -d '{}' \
+  "$PING_URL/reset" --max-time 30 2>"$CURL_OUTPUT" || printf "000")
+
+if [ "$HTTP_CODE" = "200" ]; then
+  pass "HF Space is live and responds to /reset"
+elif [ "$HTTP_CODE" = "000" ]; then
+  fail "HF Space not reachable (connection failed or timed out)"
+  hint "Check your network connection and that the Space is running."
+  hint "Try: curl -s -o /dev/null -w '%%{http_code}' -X POST $PING_URL/reset"
+  stop_at "Step 1"
 else
-  fail "openenv.yaml not found at project root"
+  fail "HF Space /reset returned HTTP $HTTP_CODE (expected 200)"
+  hint "Make sure your Space is running and the URL is correct."
+  hint "Try opening $PING_URL in your browser first."
+  stop_at "Step 1"
 fi
 
-# Dockerfile
+log "${BOLD}Step 2/3: Running docker build${NC} ..."
+
+if ! command -v docker &>/dev/null; then
+  fail "docker command not found"
+  hint "Install Docker: https://docs.docker.com/get-docker/"
+  stop_at "Step 2"
+fi
+
 if [ -f "$REPO_DIR/Dockerfile" ]; then
-  pass "Dockerfile exists"
+  DOCKER_CONTEXT="$REPO_DIR"
+elif [ -f "$REPO_DIR/server/Dockerfile" ]; then
+  DOCKER_CONTEXT="$REPO_DIR/server"
 else
-  fail "Dockerfile not found at project root"
+  fail "No Dockerfile found in repo root or server/ directory"
+  stop_at "Step 2"
 fi
 
-# inference.py
-if [ -f "$REPO_DIR/inference.py" ]; then
-  pass "inference.py exists"
+log "  Found Dockerfile in $DOCKER_CONTEXT"
+
+BUILD_OK=false
+BUILD_OUTPUT=$(run_with_timeout "$DOCKER_BUILD_TIMEOUT" docker build "$DOCKER_CONTEXT" 2>&1) && BUILD_OK=true
+
+if [ "$BUILD_OK" = true ]; then
+  pass "Docker build succeeded"
 else
-  fail "inference.py not found at project root"
+  fail "Docker build failed (timeout=${DOCKER_BUILD_TIMEOUT}s)"
+  printf "%s\n" "$BUILD_OUTPUT" | tail -20
+  stop_at "Step 2"
 fi
 
-# requirements.txt
-if [ -f "$REPO_DIR/requirements.txt" ]; then
-  pass "requirements.txt exists"
-else
-  fail "requirements.txt not found at project root"
+log "${BOLD}Step 3/3: Running openenv validate${NC} ..."
+
+if ! command -v openenv &>/dev/null; then
+  fail "openenv command not found"
+  hint "Install it: pip install openenv-core"
+  stop_at "Step 3"
 fi
 
-# ===================================================================
-# CHECK 2: openenv.yaml content validation
-# ===================================================================
-header "2/7" "openenv.yaml validation"
+VALIDATE_OK=false
+VALIDATE_OUTPUT=$(cd "$REPO_DIR" && openenv validate 2>&1) && VALIDATE_OK=true
 
-if [ -f "$REPO_DIR/openenv.yaml" ]; then
-  # Check for required fields using grep (no YAML parser dependency)
-  YAML_OK=true
-
-  if grep -q "^name:" "$REPO_DIR/openenv.yaml"; then
-    pass "openenv.yaml has 'name' field"
-  else
-    fail "openenv.yaml missing 'name' field"
-    YAML_OK=false
-  fi
-
-  if grep -q "^tasks:" "$REPO_DIR/openenv.yaml"; then
-    pass "openenv.yaml has 'tasks' field"
-  else
-    fail "openenv.yaml missing 'tasks' field"
-    YAML_OK=false
-  fi
-
-  if grep -q "^observation_space:" "$REPO_DIR/openenv.yaml"; then
-    pass "openenv.yaml has 'observation_space' field"
-  else
-    fail "openenv.yaml missing 'observation_space' field"
-    YAML_OK=false
-  fi
-
-  if grep -q "^action_space:" "$REPO_DIR/openenv.yaml"; then
-    pass "openenv.yaml has 'action_space' field"
-  else
-    fail "openenv.yaml missing 'action_space' field"
-    YAML_OK=false
-  fi
-
-  # Check that all 3 task difficulty levels are listed
-  TASK_COUNT=0
-  for task in easy medium hard; do
-    if grep -q "  - $task" "$REPO_DIR/openenv.yaml"; then
-      TASK_COUNT=$((TASK_COUNT + 1))
-    fi
-  done
-
-  if [ "$TASK_COUNT" -ge 3 ]; then
-    pass "openenv.yaml lists all 3 tasks (easy, medium, hard)"
-  else
-    fail "openenv.yaml should list at least 3 tasks (easy, medium, hard). Found: $TASK_COUNT"
-  fi
+if [ "$VALIDATE_OK" = true ]; then
+  pass "openenv validate passed"
+  [ -n "$VALIDATE_OUTPUT" ] && log "  $VALIDATE_OUTPUT"
 else
-  fail "Skipping openenv.yaml validation — file not found"
+  fail "openenv validate failed"
+  printf "%s\n" "$VALIDATE_OUTPUT"
+  stop_at "Step 3"
 fi
 
-# ===================================================================
-# CHECK 3: Docker build
-# ===================================================================
-header "3/7" "Docker build"
+printf "\n"
+printf "${BOLD}========================================${NC}\n"
+printf "${GREEN}${BOLD}  All 3/3 checks passed!${NC}\n"
+printf "${GREEN}${BOLD}  Your submission is ready to submit.${NC}\n"
+printf "${BOLD}========================================${NC}\n"
+printf "\n"
 
-if command -v docker &>/dev/null; then
-  echo "  Building Docker image (timeout: ${DOCKER_BUILD_TIMEOUT}s)..."
-  if run_with_timeout "$DOCKER_BUILD_TIMEOUT" \
-       docker build -t "$DOCKER_IMAGE_NAME" "$REPO_DIR" > /tmp/docker-build.log 2>&1; then
-    pass "Docker image built successfully"
-  else
-    fail "Docker build failed (see /tmp/docker-build.log)"
-    echo "  Last 10 lines of build log:"
-    tail -10 /tmp/docker-build.log | sed 's/^/    /'
-  fi
-else
-  fail "Docker is not installed. Install from https://docs.docker.com/get-docker/"
-fi
-
-# ===================================================================
-# CHECK 4: Server starts and responds to /health
-# ===================================================================
-header "4/7" "Server health check"
-
-CONTAINER_OK=false
-if docker image inspect "$DOCKER_IMAGE_NAME" &>/dev/null 2>&1; then
-  # Stop any previous container with the same name
-  docker rm -f "$DOCKER_CONTAINER_NAME" 2>/dev/null || true
-
-  # Start the container
-  echo "  Starting container on port $SERVER_PORT..."
-  docker run -d \
-    --name "$DOCKER_CONTAINER_NAME" \
-    -p "$SERVER_PORT:8000" \
-    "$DOCKER_IMAGE_NAME" > /dev/null 2>&1
-
-  # Wait for the server to start
-  echo "  Waiting for server to become ready (timeout: ${SERVER_STARTUP_TIMEOUT}s)..."
-  ELAPSED=0
-  while [ "$ELAPSED" -lt "$SERVER_STARTUP_TIMEOUT" ]; do
-    if curl -sf "http://localhost:$SERVER_PORT/health" > /dev/null 2>&1; then
-      CONTAINER_OK=true
-      break
-    fi
-    sleep 2
-    ELAPSED=$((ELAPSED + 2))
-  done
-
-  if [ "$CONTAINER_OK" = true ]; then
-    HEALTH_RESPONSE=$(curl -sf "http://localhost:$SERVER_PORT/health")
-    pass "Server /health responds: $HEALTH_RESPONSE"
-  else
-    fail "Server did not respond to /health within ${SERVER_STARTUP_TIMEOUT}s"
-    echo "  Container logs:"
-    docker logs "$DOCKER_CONTAINER_NAME" 2>&1 | tail -20 | sed 's/^/    /'
-  fi
-else
-  fail "Docker image not found — skipping server health check"
-fi
-
-# ===================================================================
-# CHECK 5: /reset endpoint works
-# ===================================================================
-header "5/7" "Reset endpoint"
-
-if [ "$CONTAINER_OK" = true ]; then
-  RESET_OK=true
-  for task in easy medium hard; do
-    RESPONSE=$(curl -sf -X POST "http://localhost:$SERVER_PORT/reset?task=$task" 2>/dev/null)
-    if [ $? -eq 0 ] && echo "$RESPONSE" | python3 -c "
-import sys, json
-data = json.load(sys.stdin)
-obs = data.get('observation', {})
-assert 'current_meeting' in obs, 'Missing current_meeting'
-assert 'available_rooms' in obs, 'Missing available_rooms'
-assert 'calendar_grid' in obs, 'Missing calendar_grid'
-assert 'text_summary' in obs, 'Missing text_summary'
-" 2>/dev/null; then
-      pass "POST /reset?task=$task returns valid observation"
-    else
-      fail "POST /reset?task=$task did not return expected observation"
-      RESET_OK=false
-    fi
-  done
-else
-  fail "Skipping /reset check — server not running"
-  RESET_OK=false
-fi
-
-# ===================================================================
-# CHECK 6: Run a full episode on each task and verify graders
-# ===================================================================
-header "6/7" "Task episodes & grader scores"
-
-if [ "$CONTAINER_OK" = true ]; then
-  for task in easy medium hard; do
-
-    # Reset for this task
-    RESET_RESP=$(curl -sf -X POST "http://localhost:$SERVER_PORT/reset?task=$task" 2>/dev/null)
-    if [ $? -ne 0 ]; then
-      fail "Could not reset task=$task"
-      continue
-    fi
-
-    DONE=false
-    STEP=0
-    MAX_STEPS=25  # Safety cap — hard task has 15 meetings
-    FINAL_SCORE=""
-
-    while [ "$DONE" = false ] && [ "$STEP" -lt "$MAX_STEPS" ]; do
-      STEP=$((STEP + 1))
-
-      # Send "skip" for every meeting — ensures the episode completes
-      # This is NOT testing agent quality, just that the environment runs end-to-end
-      STEP_RESP=$(curl -sf -X POST "http://localhost:$SERVER_PORT/step" \
-        -H "Content-Type: application/json" \
-        -d '{"action": {"timeslot": "skip"}}' 2>/dev/null)
-
-      if [ $? -ne 0 ]; then
-        fail "POST /step failed at step $STEP for task=$task"
-        break
-      fi
-
-      # Check if done
-      DONE=$(echo "$STEP_RESP" | python3 -c "import sys,json; print(str(json.load(sys.stdin).get('done', False)).lower())" 2>/dev/null)
-      if [ "$DONE" = "True" ] || [ "$DONE" = "true" ]; then
-        DONE=true
-        FINAL_SCORE=$(echo "$STEP_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin).get('final_score',''))" 2>/dev/null)
-      fi
-    done
-
-    if [ "$DONE" = true ]; then
-      pass "Task '$task': episode completed in $STEP steps"
-
-      # Validate final_score is in [0.0, 1.0]
-      if [ -n "$FINAL_SCORE" ]; then
-        SCORE_VALID=$(python3 -c "
-s = float('$FINAL_SCORE')
-print('yes' if 0.0 <= s <= 1.0 else 'no')
-" 2>/dev/null)
-        if [ "$SCORE_VALID" = "yes" ]; then
-          pass "Task '$task': final_score=$FINAL_SCORE (in [0.0, 1.0])"
-        else
-          fail "Task '$task': final_score=$FINAL_SCORE is outside [0.0, 1.0]"
-        fi
-      else
-        fail "Task '$task': no final_score returned when done=true"
-      fi
-    else
-      fail "Task '$task': episode did not complete within $MAX_STEPS steps"
-    fi
-  done
-else
-  fail "Skipping episode tests — server not running"
-fi
-
-# ===================================================================
-# CHECK 7: HF Space liveness (optional)
-# ===================================================================
-header "7/7" "HF Space ping"
-
-if [ -n "$PING_URL" ]; then
-  echo "  Pinging $PING_URL ..."
-  HTTP_CODE=$(curl -sf -o /dev/null -w "%{http_code}" "$PING_URL/health" 2>/dev/null)
-  if [ "$HTTP_CODE" = "200" ]; then
-    pass "HF Space /health returned HTTP 200"
-  else
-    fail "HF Space /health returned HTTP $HTTP_CODE (expected 200)"
-  fi
-
-  # Also try /reset
-  RESET_CODE=$(curl -sf -o /dev/null -w "%{http_code}" -X POST "$PING_URL/reset?task=easy" 2>/dev/null)
-  if [ "$RESET_CODE" = "200" ]; then
-    pass "HF Space POST /reset?task=easy returned HTTP 200"
-  else
-    fail "HF Space POST /reset?task=easy returned HTTP $RESET_CODE (expected 200)"
-  fi
-else
-  warn "No HF Space URL provided — skipping liveness check"
-  echo "  To test your Space, run: ./validate-submission.sh https://your-space.hf.space"
-fi
-
-# ===================================================================
-# Summary
-# ===================================================================
-
-echo ""
-echo -e "${BOLD}=============================================${NC}"
-if [ "$FAILURES" -eq 0 ]; then
-  echo -e "${GREEN}${BOLD}  ALL CHECKS PASSED ✓${NC}"
-  echo -e "  Your submission is ready for upload."
-else
-  echo -e "${RED}${BOLD}  $FAILURES CHECK(S) FAILED ✗${NC}"
-  echo -e "  Fix the issues above before submitting."
-fi
-echo -e "${BOLD}=============================================${NC}"
-
-exit "$FAILURES"
+exit 0
