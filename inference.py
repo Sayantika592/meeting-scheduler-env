@@ -42,7 +42,7 @@ from openai import OpenAI
 
 API_BASE_URL = os.getenv("API_BASE_URL", "https://router.huggingface.co/v1")
 MODEL_NAME = os.getenv("MODEL_NAME", "Qwen/Qwen2.5-72B-Instruct")
-HF_TOKEN = os.getenv("HF_TOKEN") or os.getenv("API_KEY", "")
+HF_TOKEN = os.getenv("HF_TOKEN")
 
 # Where the Meeting Scheduler server is running
 ENV_BASE_URL = os.getenv("ENV_BASE_URL", "http://localhost:8002")
@@ -302,6 +302,7 @@ def run_task(task_name: str):
     print(
         f"[END] success={'true' if success else 'false'} "
         f"steps={step_num} "
+        f"score={final_score:.2f} "
         f"rewards={rewards_str}"
     )
 
