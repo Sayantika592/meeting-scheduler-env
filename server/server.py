@@ -50,6 +50,11 @@ app = FastAPI(
 # Reset to None so we can detect "not initialized" state
 env: Optional[SchedulerEnv] = None
 
+@app.get("/")
+def root():
+    return {"status": "ok", "message": "Meeting Scheduler Environment API is running"}
+
+
 
 # ---------------------------------------------------------------------------
 # Request schemas
