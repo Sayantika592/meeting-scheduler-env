@@ -1,3 +1,13 @@
+---
+title: Meeting Scheduler Env
+emoji: 🗓️
+colorFrom: blue
+colorTo: indigo
+sdk: docker
+app_port: 8000
+pinned: false
+---
+
 # Meeting Scheduler RL Environment
 
 An RL environment that simulates real-world meeting scheduling. An AI agent assigns meetings to time slots and rooms while respecting participant availability, room capacity, equipment requirements, and time preferences.
