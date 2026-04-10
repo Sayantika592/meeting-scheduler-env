@@ -211,7 +211,7 @@ def run_task(task_name: str):
         # Step the environment
         obs = env.step(action)
 
-        reward = obs.reward if obs.reward is not None else 0.0
+        reward = obs.reward if obs.reward is not None else 0.01
         done = obs.done
         rewards.append(reward)
 
@@ -228,7 +228,7 @@ def run_task(task_name: str):
         )
 
     # Compute final score
-    final_score = grade_episode(env) if done else 0.0
+    final_score = grade_episode(env) if done else 0.01
     success = final_score > 0.5 if done else False
 
     rewards_str = ",".join(f"{r:.2f}" for r in rewards)
