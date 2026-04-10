@@ -41,7 +41,7 @@ def grade_episode(env: "SchedulerEnvironment") -> float:
     total = len(assignments)
 
     if total == 0:
-        return 0.0
+        return 0.01
 
     # ------------------------------------------------------------------
     # Component 1: COMPLETION RATE (0.0 – 1.0)
