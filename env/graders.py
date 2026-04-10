@@ -140,4 +140,4 @@ def grade_episode(env: "SchedulerEnvironment") -> float:
     )
 
     # Clamp to [0.0, 1.0] (should already be in range, but safety first)
-    return max(0.0, min(1.0, score))
+    return max(0.01, min(0.99, score))
