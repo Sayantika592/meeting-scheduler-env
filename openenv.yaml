@@ -31,4 +31,4 @@ action_space:
     timeslot: "Time string like '9:00' or 'skip'"
     room: "Room name like 'Room A' (optional when skipping)"
 
-reward_range: [-1.0, 1.7]
+reward_range: [0.01, 0.99]
