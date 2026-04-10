@@ -109,7 +109,7 @@ class SchedulerEnvironment(Environment):
         self._done = False
 
         return self._build_observation(
-            reward=0.0,
+            reward=0.01,
             message="New episode started. Schedule the first meeting.",
         )
 
@@ -129,13 +129,13 @@ class SchedulerEnvironment(Environment):
         """
         if self._done:
             return self._build_observation(
-                reward=0.0,
+                reward=0.01,
                 message="Episode already finished.",
             )
 
         self._state.step_count += 1
         current_meeting = self.meetings[self.step_idx]
-        reward = 0.0
+        reward = 0.01
 
         # ----- SKIP -----
         if action.timeslot.lower().strip() == "skip":
@@ -147,7 +147,7 @@ class SchedulerEnvironment(Environment):
                     f"scheduled. Penalty: -0.3"
                 )
             else:
-                reward = 0.0
+                reward = 0.01
                 message = (
                     f"Skipped '{current_meeting.name}'. Correct — no valid slot existed."
                 )
