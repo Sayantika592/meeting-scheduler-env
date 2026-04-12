@@ -224,7 +224,11 @@ class SchedulerEnvironment(Environment):
             self._done = True
             message += " All meetings processed — episode complete."
 
+        # Rescale to (0, 1) and normalize by number of meetings
+        # so that total episode reward stays within (0, 1)
+        num_meetings = len(self.meetings)
         reward = max(0.01, min(0.99, (reward + 1.0) / 2.7))
+        reward = max(0.01, min(0.99, reward / num_meetings))
         return self._build_observation(reward=reward, message=message)
 
     # ------------------------------------------------------------------
